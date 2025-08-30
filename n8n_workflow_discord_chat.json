@@ -1,6 +1,266 @@
 {
   "name": "Discord Chat (Stateless RAG) + Logging",
-  "nodes": [],
-  "connections": {},
-  "active": false
+  "nodes": [
+    {
+      "parameters": {
+        "command": "ask",
+        "options": {
+          "options": [
+            {
+              "type": "string",
+              "name": "question",
+              "description": "Your question for Bren",
+              "required": true
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d7",
+      "name": "Discord Slash Command",
+      "type": "n8n-nodes-base.discordTrigger",
+      "typeVersion": 1,
+      "position": [
+        400,
+        300
+      ],
+      "credentials": {
+        "discordApi": {
+          "id": "REPLACE_WITH_DISCORD_CREDENTIAL_ID",
+          "name": "Discord Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "embedding",
+        "model": "text-embedding-ada-002",
+        "text": "={{ $json.data.options.question }}"
+      },
+      "id": "b1c2d3e4-f5a6-b7c8-d9e0-f1a2b3c4d5e6",
+      "name": "Embed Question",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 3,
+      "position": [
+        620,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "rpc",
+        "schema": "public",
+        "functionName": "match_documents",
+        "functionParameters": {
+          "parameters": [
+            {
+              "name": "query_embedding",
+              "value": "={{ $json.embedding }}"
+            },
+            {
+              "name": "match_threshold",
+              "value": 0.78
+            },
+            {
+              "name": "match_count",
+              "value": 5
+            }
+          ]
+        }
+      },
+      "id": "c1d2e3f4-a5b6-c7d8-e9f0-a1b2c3d4e5f6",
+      "name": "Find Context",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        840,
+        300
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_WITH_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const system_prompt = `You write exactly like **Bren** from his livestreams—direct, pragmatic, data-aware, and concise.\\nUse structural cues he uses: **“Fast take:”**, **“What matters:”**, **“Risks:”**, **“Plan:”**,\\nand phrases like “zoom out,” “partial profits,” “risk floors,” “dominance.” No hype, no price targets.\\nSingle-turn only: treat each message independently; do **not** rely on prior chat.\\nUse only the provided CONTEXT. If something isn’t in context, say: “I don’t have that in my notes yet.”\\nPrefer tight bullets over paragraphs; ≤8 bullets unless asked for depth. End with: **“Not financial advice.”**`;\n\nconst contextItems = $items(\"Find Context\");\nconst question = $items(\"Discord Slash Command\")[0].json.data.options.question;\n\nlet context_str = \"\";\n// The result from the Supabase RPC is a single item containing an array of rows in its 'json' property.\nif (contextItems.length > 0 && contextItems[0].json) {\n  context_str = \"CONTEXT:\\n---\\n\";\n  for (const item of contextItems[0].json) {\n    context_str += item.content + \"\\n---\\n\";\n  }\n}\n\nconst user_prompt = `${context_str}QUESTION: ${question}`;\n\nreturn {\n  system_prompt: system_prompt,\n  user_prompt: user_prompt\n};"
+      },
+      "id": "d1e2f3a4-b5c6-d7e8-f9a0-b1c2d3e4f5a6",
+      "name": "Construct Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": "claude-3-haiku-20240307",
+        "system": "={{ $json.system_prompt }}",
+        "message": "={{ $json.user_prompt }}"
+      },
+      "id": "e1f2a3b4-c5d6-e7f8-a9b0-c1d2e3f4a5b6",
+      "name": "Ask Claude",
+      "type": "n8n-nodes-base.anthropic",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        300
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_WITH_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "response": "={{ $json.completion }}",
+        "options": {}
+      },
+      "id": "f1a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+      "name": "Respond in Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 3,
+      "position": [
+        1500,
+        300
+      ],
+      "credentials": {
+        "discordApi": {
+          "id": "REPLACE_WITH_DISCORD_CREDENTIAL_ID",
+          "name": "Discord Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "chat_logs",
+        "columns": {
+          "additionalFields": {
+            "fields": [
+              {
+                "name": "discord_message_id",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "name": "channel_id",
+                "value": "={{ $json.channel_id }}"
+              },
+              {
+                "name": "user_id",
+                "value": "={{ $json.member.user.id }}"
+              },
+              {
+                "name": "username",
+                "value": "={{ $json.member.user.username }}"
+              },
+              {
+                "name": "question",
+                "value": "={{ $json.data.options.question }}"
+              },
+              {
+                "name": "answer",
+                "value": "={{ $json.completion }}"
+              },
+              {
+                "name": "model",
+                "value": "claude-3-haiku-20240307"
+              }
+            ]
+          }
+        }
+      },
+      "id": "a2b3c4d5-e6f7-a8b9-c0d1-e2f3a4b5c6d7",
+      "name": "Log Q&A",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        1500,
+        500
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_WITH_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Discord Slash Command": {
+      "main": [
+        [
+          {
+            "node": "Embed Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed Question": {
+      "main": [
+        [
+          {
+            "node": "Find Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Context": {
+      "main": [
+        [
+          {
+            "node": "Construct Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construct Prompt": {
+      "main": [
+        [
+          {
+            "node": "Ask Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Claude": {
+      "main": [
+        [
+          {
+            "node": "Respond in Discord",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Q&A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {}
 }

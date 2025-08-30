@@ -1,6 +1,275 @@
 {
-  "name": "Drive \u2192 Ingest Bren Transcripts (Normalize \u2022 Embed \u2022 Upsert)",
-  "nodes": [],
-  "connections": {},
-  "active": false
+  "name": "Drive → Ingest Bren Transcripts (Normalize • Embed • Upsert)",
+  "nodes": [
+    {
+      "parameters": {
+        "events": [
+          "fileAdded"
+        ],
+        "folderId": "={{ $env.GDRIVE_FOLDER_ID }}",
+        "options": {}
+      },
+      "id": "5f8e2e5b-46e3-4f36-9bdf-1b8f0a905a2e",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 2,
+      "position": [
+        440,
+        340
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileId": "={{ $json.id }}",
+        "binary": true,
+        "options": {}
+      },
+      "id": "d8e3b1c7-3b1e-4b2c-8c6a-4f5b6e1d2f3a",
+      "name": "Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        660,
+        340
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_GOOGLE_CREDENTIAL_ID",
+          "name": "Google Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node: Normalize → Chunk → Hash (md/txt/vtt/srt)\\nconst crypto = require('crypto');\\nfunction toUtf8(item){const b=item.binary?.data?.data;return b?Buffer.from(b,'base64').toString('utf8'):''}\\nfunction stripMarkdownKeepHeadings(s){s=s.replace(/```[\\s\\S]*?```/g,' ');s=s.replace(/!\\[[^\\]]*\\]\\([^)]+\\)/g,' ');s=s.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g,'$1');s=s.replace(/<[^>]+>/g,' ');return s}\\nfunction stripVTTorSRT(s){s=s.replace(/^WEBVTT[^\\n]*\\n/gi,'');s=s.replace(/^\\d+\\s*$/gm,'');s=s.replace(/\\d{1,2}:\\d{2}:\\d{2}(?:[.,]\\d{1,3})?\\s*-->\\s*\\d{1,2}:\\d{2}:\\d{2}(?:[.,]\\d{1,3})?.*$/gm,'');s=s.replace(/\\d{1,2}:\\d{2}\\s*-->\\s*\\d{1,2}:\\d{2}.*$/gm,'');return s}\\nfunction detectKind(filename,text){const f=(filename||'').toLowerCase();if(f.endsWith('.md'))return'md';if(f.endsWith('.vtt'))return'vtt';if(f.endsWith('.srt'))return'srt';if(f.endsWith('.txt'))return'txt';if(/^webvtt/i.test(text))return'vtt';if(/\\d+\\s*\\n\\d{2}:\\d{2}:\\d{2}/.test(text))return'srt';if(/#\\s+/.test(text))return'md';return'txt'}\\nfunction normalize(filename,raw){let t=raw.replace(/\\r/g,'').trim();const kind=detectKind(filename,t);if(kind==='vtt'||kind==='srt')t=stripVTTorSRT(t);if(kind==='md')t=stripMarkdownKeepHeadings(t);t=t.replace(/[ \\t]+/g,' ').replace(/\\n{3,}/g,'\\n\\n');return{kind,text:t}}\\nfunction currentHeadingPath(lines,idx){const path=[];for(let i=idx;i>=0&&path.length<10;i--){const m=lines[i].match(/^(#{1,6})\\s+(.*)$/);if(m)path.unshift(m[2].trim())}return path.join(' > ')}\\nfunction detectSpeaker(line){const m=line.match(/^([A-Za-z][A-Za-z ._-]{1,30}):\\s+/);return m?m[1].trim():null}\\nfunction chunkWithContext(text,maxChars=2000,overlap=300){const out=[],lines=text.split('\\n');let flat='',starts=[];for(let i=0;i<lines.length;i++){starts.push({pos:flat.length,lineIndex:i});flat+=lines[i].trimEnd()+'\\n'}let i=0,idx=0;while(i<flat.length){const startPos=i,endPos=Math.min(i+maxChars,flat.length);const slice=flat.slice(startPos,endPos);let lineIdx=0;for(let k=0;k<starts.length;k++){if(starts[k].pos<=startPos)lineIdx=starts[k].lineIndex;else break}const topic_path=currentHeadingPath(lines,lineIdx)||'';const firstLine=slice.split('\\n').find(x=>x.trim().length>0)||'';const speaker=detectSpeaker(firstLine);out.push({chunk_index:idx++,topic_path,speaker:speaker||null,content:slice.trim(),tokens:slice.length});i+=(maxChars-overlap)}return out}\\nconst filename=$json.fileName||$json.name||'upload.txt';const raw=toUtf8(items[0]);const{kind,text}=normalize(filename,raw);const hash=require('crypto').createHash('sha256').update(text).digest('hex');const mTitle=text.match(/^#\\s+(.*)$/m);const stream_title=mTitle?mTitle[1].trim():null;const mDate=text.match(/\\b(20\\d{2}-\\d{2}-\\d{2})\\b/);const stream_date=mDate?mDate[1]:null;const chunks=chunkWithContext(text,2000,300);const out=[];out.push({json:{type:'source',filename,kind,doc_hash:hash,stream_title,stream_date}});for(const c of chunks)out.push({json:{type:'chunk',filename,kind,doc_hash:hash,...c}});return out;"
+      },
+      "id": "c6a2e4f0-4d3b-4c1a-8e9f-3a2b1c0d4e5f",
+      "name": "Normalize, Chunk, Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.type}}",
+              "operation": "equal",
+              "value2": "chunk"
+            }
+          ]
+        }
+      },
+      "id": "a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6",
+      "name": "Is Chunk?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "embedding",
+        "model": "text-embedding-ada-002",
+        "text": "={{ $json.content }}"
+      },
+      "id": "f1a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+      "name": "OpenAI",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 3,
+      "position": [
+        1320,
+        540
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "bren_sources",
+        "columns": {
+          "additionalFields": {
+            "fields": [
+              {
+                "name": "filename",
+                "value": "={{ $json.filename }}"
+              },
+              {
+                "name": "hash_sha256",
+                "value": "={{ $json.doc_hash }}"
+              },
+              {
+                "name": "kind",
+                "value": "={{ $json.kind }}"
+              },
+              {
+                "name": "stream_title",
+                "value": "={{ $json.stream_title }}"
+              },
+              {
+                "name": "stream_date",
+                "value": "={{ $json.stream_date }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "b1c2d3e4-f5a6-b7c8-d9e0-f1a2b3c4d5e6",
+      "name": "Insert Source",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        1320,
+        340
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_WITH_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "bren_chunks",
+        "columns": {
+          "additionalFields": {
+            "fields": [
+              {
+                "name": "source_id",
+                "value": "={{ $items('Insert Source')[0].json.id }}"
+              },
+              {
+                "name": "chunk_index",
+                "value": "={{ $json.chunk_index }}"
+              },
+              {
+                "name": "topic_path",
+                "value": "={{ $json.topic_path }}"
+              },
+              {
+                "name": "speaker",
+                "value": "={{ $json.speaker }}"
+              },
+              {
+                "name": "content",
+                "value": "={{ $json.content }}"
+              },
+              {
+                "name": "tokens",
+                "value": "={{ $json.tokens }}"
+              },
+              {
+                "name": "embedding",
+                "value": "={{ $json.embedding }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c1d2e3f4-a5b6-c7d8-e9f0-a1b2c3d4e5f6",
+      "name": "Insert Chunk",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        540
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_WITH_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Credential"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Normalize, Chunk, Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize, Chunk, Hash": {
+      "main": [
+        [
+          {
+            "node": "Is Chunk?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Chunk?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "1": [
+        [
+          {
+            "node": "Insert Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Insert Chunk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "pinData": {}
 }
